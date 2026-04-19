@@ -45,8 +45,8 @@ These are tunable — feel free to fork and adjust.
 No build step. Clone the repo and open `index.html` in a browser.
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/REPO-NAME.git
-cd REPO-NAME
+git clone https://github.com/sivaprasadakasam/TrafficSim.git
+cd TrafficSim
 open index.html  # or just double-click the file
 ```
 
