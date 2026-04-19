@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Autonomous vs Human-Driven Traffic at a Signal</title>
+<style>
+  :root {
+    --bg: #F4F2EA; --surface: #FFFFFF; --surface-2: #EDEAE0;
+    --text: #1F1F1C; --text-secondary: #5F5E5A; --text-tertiary: #888780;
+    --border: rgba(0, 0, 0, 0.12);
+    --accent-auto: #3C3489; --accent-human: #712B13;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 16px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 48px; }
+  h1 { font-size: 24px; font-weight: 500; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .subtitle { font-size: 14px; color: var(--text-secondary); margin: 0 0 24px; }
+  .controls { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+  button {
+    background: var(--surface); color: var(--text);
+    border: 0.5px solid var(--border); border-radius: 8px;
+    padding: 8px 14px; font-family: inherit; font-size: 14px; cursor: pointer;
+    transition: background 0.12s, border-color 0.12s, transform 0.08s;
+  }
+  button:hover:not(:disabled) { background: var(--surface-2); border-color: rgba(0, 0, 0, 0.25); }
+  button:active:not(:disabled) { transform: scale(0.98); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #goBtn { min-width: 160px; font-weight: 500; }
+  .status { margin-left: auto; font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .status .val { font-weight: 500; color: var(--text); }
+  .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+  .card { background: var(--surface-2); border-radius: 10px; padding: 12px 16px; }
+  .card-label { font-size: 12px; color: var(--text-secondary); letter-spacing: 0.03em; font-weight: 500; }
+  .card-label.auto { color: var(--accent-auto); }
+  .card-label.human { color: var(--accent-human); }
+  .card-value { font-size: 24px; font-weight: 500; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .card-value .unit { color: var(--text-tertiary); font-size: 14px; font-weight: 400; }
+  .card-sub { font-size: 12px; color: var(--text-secondary); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .card-sub .v { font-weight: 500; color: var(--text); }
+  .card-sub .v-gap { margin-left: 12px; }
+  svg#sim { width: 100%; display: block; border-radius: 10px; }
+  .caption { font-size: 12px; color: var(--text-tertiary); margin-top: 12px; line-height: 1.6; }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  @media (max-width: 520px) {
+    .metrics { grid-template-columns: 1fr; }
+    .status { margin-left: 0; width: 100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>Autonomous vs human-driven traffic</h1>
+  <p class="subtitle">Same signal, same arrivals, same vehicle mix — different dynamics on green.</p>
+
+  <div class="controls">
+    <button id="goBtn">Turn light green</button>
+    <button id="resetBtn">Reset</button>
+    <div class="status">
+      <span id="phaseLabel">Light: red</span>
+      <span style="margin-left: 14px;">Elapsed: <span class="val" id="timer">0.0s</span></span>
+    </div>
+  </div>
+
+  <div class="metrics">
+    <div class="card">
+      <div class="card-label auto">AUTONOMOUS LANE</div>
+      <div class="card-value"><span id="autoThrough">0</span><span class="unit"> through</span></div>
+      <div class="card-sub">Queued: <span class="v" id="autoQueue">0</span><span class="v-gap">Rate: <span class="v" id="autoRate">0</span>/min</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label human">HUMAN-DRIVEN LANE</div>
+      <div class="card-value"><span id="humanThrough">0</span><span class="unit"> through</span></div>
+      <div class="card-sub">Queued: <span class="v" id="humanQueue">0</span><span class="v-gap">Rate: <span class="v" id="humanRate">0</span>/min</span></div>
+    </div>
+  </div>
+
+  <svg id="sim" viewBox="0 0 800 220" role="img" aria-label="Two lanes of traffic controlled by a single signal">
+    <rect width="800" height="220" fill="#E8E5D8"/>
+    <text x="14" y="16" style="font: 500 11px sans-serif; fill: #3C3489; letter-spacing: 0.05em;">AUTONOMOUS</text>
+    <text x="14" y="116" style="font: 500 11px sans-serif; fill: #712B13; letter-spacing: 0.05em;">HUMAN-DRIVEN</text>
+    <rect x="0" y="22" width="800" height="72" fill="#3D3D3D"/>
+    <rect x="0" y="122" width="800" height="72" fill="#3D3D3D"/>
+    <line x1="0" y1="58" x2="800" y2="58" stroke="#E8C547" stroke-width="1.2" stroke-dasharray="14 10" opacity="0.75"/>
+    <line x1="0" y1="158" x2="800" y2="158" stroke="#E8C547" stroke-width="1.2" stroke-dasharray="14 10" opacity="0.75"/>
+    <rect x="622" y="22" width="3" height="72" fill="#FFFFFF"/>
+    <rect x="622" y="122" width="3" height="72" fill="#FFFFFF"/>
+    <rect x="601" y="102" width="47" height="15" rx="2.5" fill="#1f1f1f" stroke="#555" stroke-width="0.5"/>
+    <circle id="redBulb" cx="610" cy="109.5" r="4" fill="#E24B4A"/>
+    <circle id="yellowBulb" cx="624.5" cy="109.5" r="4" fill="#3f2e15"/>
+    <circle id="greenBulb" cx="639" cy="109.5" r="4" fill="#2a3a2a"/>
+    <g id="autoCars"></g>
+    <g id="humanCars"></g>
+  </svg>
+
+  <div class="caption">
+    Paired arrivals — same vehicle, same moment, both lanes. Coupes, EVs, and convertibles sprint; pickups cruise; school buses and semis lumber. Yellow duration is computed live from approaching speed using <code>t + v/(2a)</code>. Any throughput gap is pure lane behavior.
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const LIGHT_X = 622, AUTO_BASE = 90, HUMAN_BASE = 190, EXIT_X = 830, SPAWN_X = -70;
+  const MAX_SPEED = 175;
+  const AUTO = { accel: 220, timeHeadway: 0.35, minGap: 5, startGap: 4 };
+  const HUMAN = { accel: 85, timeHeadway: 1.5, minGap: 14, startGap: 14 };
+  const AUTO_REACTION = 0.15, HUMAN_FIRST_REACTION = 1.0, HUMAN_CASCADE = 0.55;
+
+  const C = {
+    red:    { m: '#C7443E', h: '#E0716B', s: '#8F2E28' },
+    blue:   { m: '#3A7DB5', h: '#5F9DD0', s: '#234F78' },
+    silver: { m: '#B8BBC0', h: '#D6D8DB', s: '#8C8F94' },
+    green:  { m: '#5A9A4E', h: '#7DB973', s: '#3B6F30' },
+    orange: { m: '#C87F2F', h: '#E5A252', s: '#8C5519' },
+    cream:  { m: '#E8E5DA', h: '#F8F6EE', s: '#B2AF9E' },
+    busYel: { m: '#E8B01E', h: '#F5C547', s: '#A87B0E' },
+    black:  { m: '#2E2E32', h: '#55555A', s: '#17171A' }
+  };
+  const WIN = '#1F2F45';
+  const WIN_HL = 'rgba(140,180,220,0.30)';
+  const TIRE = '#141416', RIM = '#3a3a3e', HUB = '#6a6a6e';
+
+  const TYPES = {
+    sport_coupe: { L: 44, color: 'red',    accelMult: 1.25, v0Mult: 1.00, weight: 0.14 },
+    sedan:       { L: 52, color: 'blue',   accelMult: 1.00, v0Mult: 1.00, weight: 0.22 },
+    ev_sedan:    { L: 54, color: 'silver', accelMult: 1.50, v0Mult: 1.05, weight: 0.13 },
+    convertible: { L: 46, color: 'cream',  accelMult: 1.20, v0Mult: 1.00, weight: 0.06 },
+    minivan:     { L: 58, color: 'green',  accelMult: 0.80, v0Mult: 0.95, weight: 0.14 },
+    pickup:      { L: 66, color: 'orange', accelMult: 0.85, v0Mult: 1.00, weight: 0.14 },
+    school_bus:  { L: 96, color: 'busYel', accelMult: 0.50, v0Mult: 0.85, weight: 0.07 },
+    semi:        { L: 98, color: 'black',  accelMult: 0.40, v0Mult: 0.88, weight: 0.10 }
+  };
+  const TYPE_KEYS = Object.keys(TYPES);
+
+  function sampleType() {
+    const r = Math.random();
+    let cum = 0;
+    for (let i = 0; i < TYPE_KEYS.length; i++) {
+      cum += TYPES[TYPE_KEYS[i]].weight;
+      if (r < cum) return TYPE_KEYS[i];
+    }
+    return 'sedan';
+  }
+
+  function wheel(cx, r) {
+    return `<ellipse cx="${cx}" cy="1" rx="${r+2}" ry="${r*0.5}" fill="rgba(0,0,0,0.35)"/>
+<circle cx="${cx}" cy="0" r="${r}" fill="${TIRE}"/>
+<circle cx="${cx}" cy="0" r="${r*0.62}" fill="${RIM}"/>
+<circle cx="${cx}" cy="0" r="${r*0.22}" fill="${HUB}"/>`;
+  }
+
+  function shadow(L) {
+    return `<ellipse cx="${-L/2}" cy="4" rx="${L/2 + 3}" ry="2" fill="rgba(0,0,0,0.18)"/>`;
+  }
+
+  function carShape(type, color) {
+    const L = TYPES[type].L;
+    const k = C[color];
+
+    if (type === 'sport_coupe') return `${shadow(L)}
+<path d="M ${-L} -2 L ${-L} -7 L ${-L+3} -9 L -6 -9 L 0 -7 L 0 -2 Z" fill="${k.m}"/>
+<path d="M ${-L+3} -9 L -6 -9 L -6 -8.2 L ${-L+3} -8.2 Z" fill="${k.h}"/>
+<path d="M ${-L} -3 L 0 -3 L 0 -2 L ${-L} -2 Z" fill="${k.s}" opacity="0.8"/>
+<path d="M ${-L+14} -9 L ${-L+20} -14.5 L -16 -14.5 L -10 -9 Z" fill="${k.m}"/>
+<path d="M ${-L+20} -14.5 L -16 -14.5 L -16 -14 L ${-L+20} -14 Z" fill="${k.h}"/>
+<path d="M ${-L+17} -9.3 L ${-L+20.5} -14 L -16.3 -14 L -11 -9.3 Z" fill="${WIN}"/>
+<path d="M ${-L+18} -9.8 L ${-L+20.8} -13.7 L ${-L+26} -13.5 L ${-L+19} -10.3 Z" fill="${WIN_HL}"/>
+<line x1="${-L+30}" y1="-14" x2="${-L+30}" y2="-9.3" stroke="${k.s}" stroke-width="0.8"/>
+<rect x="-3.5" y="-5" width="2.5" height="1.8" fill="#F5E8A8" rx="0.3"/>
+<rect x="${-L+0.5}" y="-5.5" width="2.5" height="2" fill="#D94A3A" rx="0.3"/>
+<path d="M ${-L+20} -13.5 L ${-L+18} -12.5 L ${-L+19} -11.5 L ${-L+21} -12.5 Z" fill="${k.s}"/>
+<line x1="${-L+1}" y1="-7" x2="${-L+1}" y2="-3" stroke="${k.s}" stroke-width="0.4" opacity="0.6"/>
+${wheel(-L+10, 4.5)}
+${wheel(-9, 4.5)}`;
+
+    if (type === 'sedan') return `${shadow(L)}
+<path d="M ${-L} -2 L ${-L} -8 L ${-L+4} -10 L -5 -10 L 0 -8 L 0 -2 Z" fill="${k.m}"/>
+<path d="M ${-L+4} -10 L -5 -10 L -5 -9 L ${-L+4} -9 Z" fill="${k.h}"/>
+<path d="M ${-L} -3 L 0 -3 L 0 -2 L ${-L} -2 Z" fill="${k.s}" opacity="0.7"/>
+<path d="M ${-L+14} -10 L ${-L+19} -17 L -15 -17 L -9 -10 Z" fill="${k.m}"/>
+<path d="M ${-L+19} -17 L -15 -17 L -15 -16.3 L ${-L+19} -16.3 Z" fill="${k.h}"/>
+<path d="M ${-L+17} -10.5 L ${-L+20} -16.5 L -15.5 -16.5 L -10.5 -10.5 Z" fill="${WIN}"/>
+<path d="M ${-L+18} -11 L ${-L+20.2} -16 L ${-L+27} -15.8 L ${-L+19} -12 Z" fill="${WIN_HL}"/>
+<line x1="${-L+27}" y1="-16.5" x2="${-L+27}" y2="-10.5" stroke="${k.s}" stroke-width="0.8"/>
+<line x1="${-L+38}" y1="-16.5" x2="${-L+38}" y2="-10.5" stroke="${k.s}" stroke-width="0.4" opacity="0.6"/>
+<rect x="-3.5" y="-6" width="2.8" height="2.2" fill="#F5E8A8" rx="0.3"/>
+<rect x="${-L+0.5}" y="-6.5" width="2.8" height="2.3" fill="#D94A3A" rx="0.3"/>
+<path d="M ${-L+20} -16 L ${-L+18} -14.8 L ${-L+19.2} -13.7 L ${-L+21.2} -14.9 Z" fill="${k.s}"/>
+<line x1="${-L+22}" y1="-10" x2="${-L+22}" y2="-3.2" stroke="${k.s}" stroke-width="0.4" opacity="0.5"/>
+${wheel(-L+11, 4.5)}
+${wheel(-10, 4.5)}`;
+
+    if (type === 'ev_sedan') return `${shadow(L)}
+<path d="M ${-L} -2 L ${-L} -7.5 L ${-L+2.5} -9.5 L -4 -9.5 L 0 -7.5 L 0 -2 Z" fill="${k.m}"/>
+<path d="M ${-L+2.5} -9.5 L -4 -9.5 L -4 -8.8 L ${-L+2.5} -8.8 Z" fill="${k.h}"/>
+<path d="M ${-L} -2.8 L 0 -2.8 L 0 -2 L ${-L} -2 Z" fill="${k.s}" opacity="0.6"/>
+<path d="M ${-L+13} -9.5 L ${-L+21} -16.5 L -20 -16.5 L -5 -9.5 Z" fill="${k.m}"/>
+<path d="M ${-L+21} -16.5 L -20 -16.5 L -20 -15.9 L ${-L+21} -15.9 Z" fill="${k.h}"/>
+<path d="M ${-L+16} -9.8 L ${-L+22} -16 L -20.5 -16 L -6.5 -9.8 Z" fill="${WIN}"/>
+<path d="M ${-L+17} -10.3 L ${-L+22.2} -15.6 L ${-L+31} -15.5 L ${-L+20} -11.8 Z" fill="${WIN_HL}"/>
+<line x1="${-L+32}" y1="-15.9" x2="${-L+32}" y2="-10.1" stroke="${k.s}" stroke-width="0.8"/>
+<rect x="-3" y="-5.5" width="3" height="1.2" fill="#D8EDF5" rx="0.2"/>
+<rect x="${-L+0.5}" y="-5.5" width="3" height="1.5" fill="#D94A3A" rx="0.3"/>
+<rect x="${-L+0.5}" y="-3.5" width="3" height="0.5" fill="#C54030" rx="0.2"/>
+<path d="M ${-L+22} -15.8 L ${-L+20} -14.5 L ${-L+21.2} -13.5 L ${-L+23.2} -14.8 Z" fill="${k.s}"/>
+<line x1="${-L+20}" y1="-9.5" x2="${-L+20}" y2="-3" stroke="${k.s}" stroke-width="0.4" opacity="0.6"/>
+<rect x="${-L+1}" y="-4" width="1" height="1" fill="${k.h}" opacity="0.9"/>
+${wheel(-L+11, 4.5)}
+${wheel(-9, 4.5)}`;
+
+    if (type === 'convertible') return `${shadow(L)}
+<path d="M ${-L} -2 L ${-L} -8 L ${-L+4} -10 L -5 -10 L 0 -8 L 0 -2 Z" fill="${k.m}"/>
+<path d="M ${-L+4} -10 L -5 -10 L -5 -9 L ${-L+4} -9 Z" fill="${k.h}"/>
+<path d="M ${-L} -3 L 0 -3 L 0 -2 L ${-L} -2 Z" fill="${k.s}" opacity="0.7"/>
+<rect x="${-L+12}" y="-11" width="${L-32}" height="1.5" fill="${k.s}" opacity="0.7"/>
+<rect x="${-L+15}" y="-12" width="4" height="2" fill="${k.s}" opacity="0.95" rx="0.3"/>
+<rect x="-29" y="-12" width="4" height="2" fill="${k.s}" opacity="0.95" rx="0.3"/>
+<path d="M -19 -10 L -23 -15 L -25 -15 L -21 -10 Z" fill="${WIN}"/>
+<path d="M -19.5 -10.3 L -22.7 -14.5 L -24.5 -14.5 L -21 -10.3 Z" fill="${WIN_HL}"/>
+<rect x="-25.5" y="-15.5" width="3" height="0.6" fill="${k.s}"/>
+<rect x="-3.5" y="-6" width="2.8" height="2" fill="#F5E8A8" rx="0.3"/>
+<rect x="${-L+0.5}" y="-6.5" width="2.8" height="2.2" fill="#D94A3A" rx="0.3"/>
+${wheel(-L+11, 4.5)}
+${wheel(-10, 4.5)}`;
+
+    if (type === 'minivan') return `${shadow(L)}
+<path d="M ${-L} -2 L ${-L} -11 L ${-L+3} -12 L -4 -12 L 0 -10 L 0 -2 Z" fill="${k.m}"/>
+<path d="M ${-L+3} -12 L -4 -12 L -4 -11 L ${-L+3} -11 Z" fill="${k.h}"/>
+<path d="M ${-L} -3 L 0 -3 L 0 -2 L ${-L} -2 Z" fill="${k.s}" opacity="0.7"/>
+<path d="M ${-L+4} -12 L ${-L+7} -20 L ${-L+45} -20 L ${-L+50} -12 Z" fill="${k.m}"/>
+<path d="M ${-L+7} -20 L ${-L+45} -20 L ${-L+45} -19.3 L ${-L+7} -19.3 Z" fill="${k.h}"/>
+<path d="M ${-L+9} -12.3 L ${-L+11} -19 L ${-L+44} -19 L ${-L+48} -12.3 Z" fill="${WIN}"/>
+<path d="M ${-L+10} -13 L ${-L+12} -18.5 L ${-L+42} -18.5 L ${-L+20} -14 Z" fill="${WIN_HL}"/>
+<line x1="${-L+22}" y1="-19" x2="${-L+22}" y2="-12.3" stroke="${k.s}" stroke-width="0.8"/>
+<line x1="${-L+36}" y1="-19" x2="${-L+36}" y2="-12.3" stroke="${k.s}" stroke-width="0.8"/>
+<rect x="-3" y="-7" width="2.8" height="2.5" fill="#F5E8A8" rx="0.3"/>
+<rect x="${-L+0.5}" y="-8" width="2.8" height="2.8" fill="#D94A3A" rx="0.3"/>
+<path d="M ${-L+7} -18.5 L ${-L+5} -17.5 L ${-L+6} -16.5 L ${-L+8} -17.5 Z" fill="${k.s}"/>
+<line x1="${-L+22}" y1="-11" x2="${-L+22}" y2="-3" stroke="${k.s}" stroke-width="0.4" opacity="0.5"/>
+<line x1="${-L+36}" y1="-11" x2="${-L+36}" y2="-3" stroke="${k.s}" stroke-width="0.4" opacity="0.5"/>
+${wheel(-L+12, 5)}
+${wheel(-10, 5)}`;
+
+    if (type === 'pickup') return `${shadow(L)}
+<path d="M ${-L} -3 L ${-L} -11 L ${-L+3} -12 L -5 -12 L 0 -9 L 0 -3 Z" fill="${k.m}"/>
+<path d="M ${-L+3} -12 L -5 -12 L -5 -11 L ${-L+3} -11 Z" fill="${k.h}"/>
+<path d="M ${-L} -4 L 0 -4 L 0 -3 L ${-L} -3 Z" fill="${k.s}" opacity="0.8"/>
+<path d="M -32 -12 L -26 -22 L -9 -22 L -5 -12 Z" fill="${k.m}"/>
+<path d="M -26 -22 L -9 -22 L -9 -21.3 L -26 -21.3 Z" fill="${k.h}"/>
+<path d="M -30 -12.3 L -25 -21 L -10 -21 L -7 -12.3 Z" fill="${WIN}"/>
+<path d="M -29 -13 L -24.5 -20.5 L -16 -20.5 L -19 -16 Z" fill="${WIN_HL}"/>
+<line x1="-18" y1="-20.5" x2="-18" y2="-12.3" stroke="${k.s}" stroke-width="0.8"/>
+<path d="M ${-L+5} -12 L -34 -12 L -34 -9 L ${-L+5} -10 Z" fill="${k.s}" opacity="0.5"/>
+<rect x="${-L+5}" y="-12" width="${L-39}" height="0.8" fill="${k.h}" opacity="0.6"/>
+<line x1="${-L+4}" y1="-12" x2="${-L+4}" y2="-3" stroke="${k.s}" stroke-width="0.8"/>
+<rect x="-3.5" y="-8" width="3" height="2.5" fill="#F5E8A8" rx="0.3"/>
+<rect x="-3.5" y="-5" width="3" height="1" fill="#F5E8A8" rx="0.2"/>
+<rect x="${-L+0.5}" y="-9" width="3" height="3" fill="#D94A3A" rx="0.3"/>
+<ellipse cx="${-L+12}" cy="1.5" rx="6" ry="1.5" fill="rgba(0,0,0,0.3)"/>
+<ellipse cx="-11" cy="1.5" rx="6" ry="1.5" fill="rgba(0,0,0,0.3)"/>
+${wheel(-L+12, 5.5)}
+${wheel(-11, 5.5)}`;
+
+    if (type === 'school_bus') return `${shadow(L)}
+<path d="M ${-L} -3 L ${-L} -22 L ${-L+4} -24 L -3 -24 L 0 -22 L 0 -3 Z" fill="${k.m}"/>
+<path d="M ${-L+4} -24 L -3 -24 L -3 -23.2 L ${-L+4} -23.2 Z" fill="${k.h}"/>
+<path d="M ${-L} -23 L 0 -23 L 0 -21 L ${-L} -21 Z" fill="${k.h}" opacity="0.8"/>
+<path d="M ${-L} -4 L 0 -4 L 0 -3 L ${-L} -3 Z" fill="${k.s}"/>
+<rect x="${-L+2}" y="-5" width="${L-4}" height="1.5" fill="#1a1a1a"/>
+<rect x="${-L+4}" y="-20" width="${L-15}" height="7" fill="${WIN}"/>
+<rect x="${-L+4}" y="-20" width="${L-15}" height="1" fill="${WIN_HL}"/>
+${(() => { let w = ''; for (let i = 0; i < 6; i++) { const x = -L + 7 + i * 13; w += `<rect x="${x}" y="-20" width="1" height="7" fill="${k.m}"/>`; } return w; })()}
+<rect x="${-L+2}" y="-13" width="${L-4}" height="1" fill="${k.s}" opacity="0.7"/>
+<rect x="-15" y="-19" width="3" height="6" fill="${WIN}"/>
+<rect x="-15" y="-19" width="3" height="1" fill="${WIN_HL}"/>
+<rect x="-9" y="-19" width="7" height="8" fill="${WIN}"/>
+<rect x="-9" y="-19" width="7" height="1" fill="${WIN_HL}"/>
+<rect x="-3.5" y="-9" width="3" height="2" fill="#F5E8A8" rx="0.3"/>
+<rect x="-3.5" y="-6.5" width="3" height="1" fill="#E84A3A" rx="0.2"/>
+<rect x="${-L+0.5}" y="-9" width="3" height="2.5" fill="#D94A3A" rx="0.3"/>
+<rect x="${-L+1}" y="-15" width="${L-3}" height="2" fill="#1a1a1a" opacity="0.85"/>
+<text x="${-L/2}" y="-16.3" text-anchor="middle" style="font: 700 4px sans-serif; fill: #1a1a1a;">SCHOOL BUS</text>
+${wheel(-L+11, 5.5)}
+${wheel(-10, 5.5)}`;
+
+    if (type === 'semi') return `${shadow(L)}
+<rect x="${-L}" y="-22" width="${L-28}" height="19" fill="${C.cream.m}" stroke="#999" stroke-width="0.5"/>
+<rect x="${-L}" y="-22" width="${L-28}" height="1" fill="${C.cream.h}"/>
+<rect x="${-L}" y="-4" width="${L-28}" height="1" fill="${C.cream.s}"/>
+<line x1="${-L+20}" y1="-22" x2="${-L+20}" y2="-3" stroke="#aaa" stroke-width="0.5"/>
+<line x1="${-L+45}" y1="-22" x2="${-L+45}" y2="-3" stroke="#aaa" stroke-width="0.5"/>
+<line x1="${-L+5}" y1="-12" x2="${-L+65}" y2="-12" stroke="${C.cream.s}" stroke-width="0.3" opacity="0.5"/>
+<path d="M -28 -2 L -28 -18 L -25 -20 L -10 -20 L -5 -17 L -5 -14 L -2 -13 L 0 -10 L 0 -2 Z" fill="${k.m}"/>
+<path d="M -25 -20 L -10 -20 L -10 -19.3 L -25 -19.3 Z" fill="${k.h}"/>
+<path d="M -28 -3 L 0 -3 L 0 -2 L -28 -2 Z" fill="${k.s}"/>
+<path d="M -23 -18.3 L -20 -19.5 L -11 -19.5 L -8 -17 L -8 -14 L -23 -14 Z" fill="${WIN}"/>
+<path d="M -22 -18.8 L -19.5 -19.2 L -12 -19.2 L -10 -17.5 L -20 -15.5 Z" fill="${WIN_HL}"/>
+<line x1="-15" y1="-19.3" x2="-15" y2="-14" stroke="${k.s}" stroke-width="0.6"/>
+<path d="M -5 -17 L 0 -14 L 0 -10 L -2 -13 Z" fill="${k.s}" opacity="0.8"/>
+<rect x="-4.5" y="-11" width="1.5" height="3" fill="#1a1a1a"/>
+<path d="M -12 -22 L -12 -23 L -11 -23 L -11 -22 Z" fill="${k.s}"/>
+<rect x="-13" y="-30" width="2" height="8" fill="${k.s}"/>
+<rect x="-13" y="-31" width="2.5" height="1.5" fill="#3a3a3a" rx="0.2"/>
+<rect x="-3" y="-8" width="2.5" height="2" fill="#F5E8A8" rx="0.2"/>
+<rect x="${-L+0.5}" y="-8" width="2.5" height="2.5" fill="#D94A3A" rx="0.3"/>
+<path d="M -10 -19 L -12 -17.5 L -11 -16.5 L -9 -18 Z" fill="${k.s}"/>
+<ellipse cx="${-L+12}" cy="2" rx="7" ry="1.8" fill="rgba(0,0,0,0.3)"/>
+<ellipse cx="${-L+30}" cy="2" rx="7" ry="1.8" fill="rgba(0,0,0,0.3)"/>
+<ellipse cx="-32" cy="2" rx="7" ry="1.8" fill="rgba(0,0,0,0.3)"/>
+<ellipse cx="-13" cy="2" rx="6" ry="1.8" fill="rgba(0,0,0,0.3)"/>
+${wheel(-L+10, 5)}
+${wheel(-L+27, 5)}
+${wheel(-32, 5)}
+${wheel(-13, 5)}`;
+
+    return '';
+  }
+
+  const autoGroup = document.getElementById('autoCars');
+  const humanGroup = document.getElementById('humanCars');
+  const timerEl = document.getElementById('timer');
+  const phaseEl = document.getElementById('phaseLabel');
+  const autoThroughEl = document.getElementById('autoThrough');
+  const humanThroughEl = document.getElementById('humanThrough');
+  const autoQueueEl = document.getElementById('autoQueue');
+  const humanQueueEl = document.getElementById('humanQueue');
+  const autoRateEl = document.getElementById('autoRate');
+  const humanRateEl = document.getElementById('humanRate');
+  const redBulb = document.getElementById('redBulb');
+  const yellowBulb = document.getElementById('yellowBulb');
+  const greenBulb = document.getElementById('greenBulb');
+  const goBtn = document.getElementById('goBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  let autoCars = [], humanCars = [];
+  let simTime = 0, lastTs = 0;
+  let lightState = 'red', yellowUntil = 0, lastYellowDur = 0;
+  let autoThrough = 0, humanThrough = 0;
+  let nextSpawnAt = 0;
+  let autoPassTimestamps = [], humanPassTimestamps = [];
+  let running = true, rafHandle = 0;
+
+  function createCar(type, x, v) {
+    const spec = TYPES[type];
+    return {
+      type, length: spec.L, color: spec.color,
+      accelMult: spec.accelMult, v0Mult: spec.v0Mult,
+      x, v, frozenUntil: 0, hasPassed: false, _el: null
+    };
+  }
+
+  function attachElement(car, baseY, groupEl) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.innerHTML = carShape(car.type, car.color);
+    g.setAttribute('transform', `translate(${car.x.toFixed(1)},${baseY})`);
+    car._el = g;
+    groupEl.appendChild(g);
+  }
+
+  function buildInitialQueue(cars, startGap, baseY, groupEl) {
+    const types = ['sedan','sport_coupe','pickup','ev_sedan'];
+    let frontX = LIGHT_X - 3;
+    for (let i = 0; i < types.length; i++) {
+      const car = createCar(types[i], frontX, 0);
+      cars.push(car);
+      attachElement(car, baseY, groupEl);
+      frontX -= (TYPES[types[i]].L + startGap);
+    }
+  }
+
+  function trySpawnType(cars, baseY, groupEl, isAuto, type) {
+    const last = cars[cars.length - 1];
+    const minGap = isAuto ? 25 : 45;
+    if (last) {
+      const lastBack = last.x - last.length;
+      if (lastBack - SPAWN_X < minGap) return false;
+    }
+    const car = createCar(type, SPAWN_X, MAX_SPEED * 0.55 * TYPES[type].v0Mult);
+    attachElement(car, baseY, groupEl);
+    cars.push(car);
+    return true;
+  }
+
+  function effectiveAhead(car, realAhead) {
+    if (car.x >= LIGHT_X) return realAhead;
+    let virtual = null;
+    if (lightState === 'red') {
+      virtual = { x: LIGHT_X, length: 0, v: 0 };
+    } else if (lightState === 'yellow') {
+      const decel = 140;
+      const stoppingDist = (car.v * car.v) / (2 * decel);
+      const distToLine = LIGHT_X - car.x;
+      if (distToLine > stoppingDist * 1.4) virtual = { x: LIGHT_X, length: 0, v: 0 };
+    }
+    if (!virtual) return realAhead;
+    if (!realAhead) return virtual;
+    const realGap = (realAhead.x - realAhead.length) - car.x;
+    const virtGap = virtual.x - car.x;
+    return virtGap < realGap ? virtual : realAhead;
+  }
+
+  function idmAccel(car, ahead, params) {
+    const v = car.v;
+    const v0 = MAX_SPEED * car.v0Mult;
+    const a = params.accel * car.accelMult;
+    const b = a * 1.8;
+    const T = params.timeHeadway;
+    const s0 = params.minGap;
+    const freeTerm = 1 - Math.pow(Math.min(v / v0, 1), 4);
+    if (!ahead) return a * freeTerm;
+    const s = Math.max(0.1, (ahead.x - ahead.length) - car.x);
+    const dv = v - ahead.v;
+    const sStar = s0 + Math.max(0, v * T + (v * dv) / (2 * Math.sqrt(a * b)));
+    const interaction = Math.pow(sStar / s, 2);
+    return a * (freeTerm - interaction);
+  }
+
+  function updateLane(cars, baseY, isAuto, dt) {
+    const params = isAuto ? AUTO : HUMAN;
+    for (let i = 0; i < cars.length; i++) {
+      const car = cars[i];
+      if (simTime < car.frozenUntil) { car.v = 0; continue; }
+      const realAhead = i > 0 ? cars[i - 1] : null;
+      const ahead = effectiveAhead(car, realAhead);
+      let a = idmAccel(car, ahead, params);
+      const maxA = params.accel * car.accelMult;
+      a = Math.max(-maxA * 2.5, Math.min(maxA, a));
+      car.v = Math.max(0, car.v + a * dt);
+      car.x += car.v * dt;
+      if (!car.hasPassed && car.x >= LIGHT_X) {
+        car.hasPassed = true;
+        if (isAuto) { autoThrough++; autoPassTimestamps.push(simTime); }
+        else { humanThrough++; humanPassTimestamps.push(simTime); }
+      }
+    }
+    for (let i = 0; i < cars.length; i++) {
+      cars[i]._el.setAttribute('transform', `translate(${cars[i].x.toFixed(1)},${baseY})`);
+    }
+  }
+
+  function cleanup(cars, groupEl) {
+    for (let i = cars.length - 1; i >= 0; i--) {
+      if (cars[i].x > EXIT_X) {
+        groupEl.removeChild(cars[i]._el);
+        cars.splice(i, 1);
+      }
+    }
+  }
+
+  function countQueued(cars) {
+    let n = 0;
+    for (const c of cars) if (c.v < 4 && c.x < LIGHT_X) n++;
+    return n;
+  }
+
+  function trimTimestamps(arr, cutoff) {
+    while (arr.length && arr[0] < cutoff) arr.shift();
+  }
+
+  function updateBulbs() {
+    const off = { red: '#4a1a1a', yellow: '#3f2e15', green: '#2a3a2a' };
+    const on  = { red: '#F04948', yellow: '#F2A63B', green: '#4AD070' };
+    redBulb.setAttribute('fill',    lightState === 'red'    ? on.red    : off.red);
+    yellowBulb.setAttribute('fill', lightState === 'yellow' ? on.yellow : off.yellow);
+    greenBulb.setAttribute('fill',  lightState === 'green'  ? on.green  : off.green);
+  }
+
+  function updateButton() {
+    if (lightState === 'red')        { goBtn.textContent = 'Turn light green'; goBtn.disabled = false; }
+    else if (lightState === 'green') { goBtn.textContent = 'Turn light red';   goBtn.disabled = false; }
+    else                             { goBtn.textContent = 'Changing...';      goBtn.disabled = true;  }
+  }
+
+  function setGreen() {
+    lightState = 'green';
+    autoCars.forEach(c => { if (c.v < 3 && c.x < LIGHT_X) c.frozenUntil = simTime + AUTO_REACTION; });
+    const stoppedH = humanCars.filter(c => c.v < 3 && c.x < LIGHT_X).sort((a,b) => b.x - a.x);
+    stoppedH.forEach((c, idx) => { c.frozenUntil = simTime + HUMAN_FIRST_REACTION + idx * HUMAN_CASCADE; });
+    updateBulbs(); updateButton();
+  }
+
+  function setYellow() {
+    lightState = 'yellow';
+    let maxV = 0;
+    for (const c of autoCars) if (c.x < LIGHT_X + 30 && c.v > maxV) maxV = c.v;
+    for (const c of humanCars) if (c.x < LIGHT_X + 30 && c.v > maxV) maxV = c.v;
+    const dur = Math.max(1.0, 0.8 + maxV / 85);
+    lastYellowDur = dur;
+    yellowUntil = simTime + dur;
+    updateBulbs(); updateButton();
+  }
+
+  function setRed() { lightState = 'red'; updateBulbs(); updateButton(); }
+
+  function toggle() {
+    if (lightState === 'red') setGreen();
+    else if (lightState === 'green') setYellow();
+  }
+
+  function frame(ts) {
+    if (!running) return;
+    if (!lastTs) lastTs = ts;
+    let dt = (ts - lastTs) / 1000;
+    if (dt > 0.04) dt = 0.04;
+    lastTs = ts;
+    simTime += dt;
+
+    if (lightState === 'yellow' && simTime >= yellowUntil) setRed();
+
+    if (simTime >= nextSpawnAt) {
+      const type = sampleType();
+      trySpawnType(autoCars, AUTO_BASE, autoGroup, true, type);
+      trySpawnType(humanCars, HUMAN_BASE, humanGroup, false, type);
+      nextSpawnAt = simTime + 1.3 + Math.random() * 1.0;
+    }
+
+    updateLane(autoCars, AUTO_BASE, true, dt);
+    updateLane(humanCars, HUMAN_BASE, false, dt);
+    cleanup(autoCars, autoGroup);
+    cleanup(humanCars, humanGroup);
+
+    const cutoff = simTime - 20;
+    trimTimestamps(autoPassTimestamps, cutoff);
+    trimTimestamps(humanPassTimestamps, cutoff);
+
+    autoThroughEl.textContent = autoThrough;
+    humanThroughEl.textContent = humanThrough;
+    autoQueueEl.textContent = countQueued(autoCars);
+    humanQueueEl.textContent = countQueued(humanCars);
+    const w = Math.min(20, simTime);
+    autoRateEl.textContent = w > 1 ? Math.round(autoPassTimestamps.length * 60 / w) : 0;
+    humanRateEl.textContent = w > 1 ? Math.round(humanPassTimestamps.length * 60 / w) : 0;
+
+    timerEl.textContent = simTime.toFixed(1) + 's';
+    if (lightState === 'yellow') {
+      const remaining = Math.max(0, yellowUntil - simTime);
+      phaseEl.textContent = `Light: yellow (${remaining.toFixed(1)}s of ${lastYellowDur.toFixed(1)}s)`;
+    } else {
+      phaseEl.textContent = 'Light: ' + lightState;
+    }
+
+    rafHandle = requestAnimationFrame(frame);
+  }
+
+  function reset() {
+    cancelAnimationFrame(rafHandle);
+    autoCars.forEach(c => autoGroup.removeChild(c._el));
+    humanCars.forEach(c => humanGroup.removeChild(c._el));
+    autoCars = []; humanCars = [];
+    simTime = 0; lastTs = 0;
+    lightState = 'red';
+    autoThrough = 0; humanThrough = 0;
+    autoPassTimestamps = []; humanPassTimestamps = [];
+    nextSpawnAt = 3.0;
+    buildInitialQueue(autoCars, AUTO.startGap, AUTO_BASE, autoGroup);
+    buildInitialQueue(humanCars, HUMAN.startGap, HUMAN_BASE, humanGroup);
+    updateBulbs(); updateButton();
+    running = true;
+    rafHandle = requestAnimationFrame(frame);
+  }
+
+  goBtn.addEventListener('click', toggle);
+  resetBtn.addEventListener('click', reset);
+  reset();
+})();
+</script>
+</body>
+</html>
